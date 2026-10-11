@@ -1,0 +1,438 @@
+---
+title: "Trishkin. Associations"
+format: 
+    html:
+        embed-resources: true
+---
+
+
+```{r preparations, include = FALSE, echo = FALSE, warning = FALSE}
+library(tidyverse)
+library(flextable)
+library(janitor)
+hyper_data <- read.csv("data/hypertension.csv")
+poison_data <- read.csv("data/otravlenie.csv")
+carrental_data <- read.csv("data/carrental.csv")
+```
+#  Гипертоническая болезнь
+```{r hypertension_contigency_table, warning = FALSE, include = FALSE}
+ct_hyper <- hyper_data |>
+  rename("ID" = `пациент`, "male" = `мужчина`, "ht" = `гипертония`) |>
+  group_by(male) |>
+  count(male, ht) |>
+  pivot_wider(names_from = ht, values_from = n) |>
+  mutate(Total = `0` + `1`, male = factor(male)) |>
+  relocate(`0`, .after = `1`) |>
+  adorn_totals("row")
+
+hyper_table <- ct_hyper |>
+  rename(
+    "Мужучина (Exposure)" = male,
+    "Нет гипертонии (No outcome)" = `0`,
+    "Есть гипертогния (Outcome)" = `1`
+  ) |>
+  flextable() |>
+  theme_zebra() |>
+  autofit()
+hyper_table
+```
+Относительный риск - так как это базовое исследование. Также, на выбор повлиял тип исследования. В нашем случае - это ретроспективное когортное исследование. Мы точно знаем, что в начале был пол, как воздействие. Исход - наличие/отсутствие гипертонии. 
+
+```{r hypertension_countings, warning = FALSE, include = FALSE}
+male_ht_incidence_risk <- ct_hyper$`1`[2] / ct_hyper$Total[2]
+
+female_ht_incidence_risk <- ct_hyper$`1`[1] / ct_hyper$Total[1]
+
+hyper_RR <- male_ht_incidence_risk / female_ht_incidence_risk
+
+
+hyper_RR_table <- data.frame(
+  cohort = c("Мужчины", "Женщины"),
+  ht_incidence_risk = c(male_ht_incidence_risk, female_ht_incidence_risk)
+) |>
+  flextable() |>
+  theme_zebra() |>
+  set_header_labels(
+    cohort = "Когорта",
+    ht_incidence_risk = "Заболеваемость (incidence)"
+  ) |>
+  autofit()
+hyper_RR_table
+
+sprintf(
+  "Относительный риск гипертонии среди группы мужчин в сравнении с группой женщин равен:"
+)
+hyper_RR
+
+hyper_RD <- male_ht_incidence_risk - female_ht_incidence_risk
+sprintf("Разница рисков гипертонии среди группы мужчин и группы женщин равена:")
+hyper_RD
+```
+
+Таким образом, наблюдается положительная ассоциация между мужским полом и риском гипертонической болезни в данной выборке. Это и подтверждается данными по заболеваемости ГБ среди мужчин и женщин. Также, цифра 2.24 свидетельствует о повышенном более чем в два раза риске заболеваемости ГБ, при условии, что пациент - мужчина. Взаимосвязь с полом есть.
+
+# Отравление в университете
+```{r university_poisoning, warning = FALSE, inlude = FALSE}
+poison_data |>
+  mutate(`кол-во блюд` = `мясо` + `рыба` + `салат`) |>
+  pivot_longer(
+    cols = `мясо`:`салат`,
+    names_to = "еда",
+    values_to = "факт употребления"
+  ) |>
+  group_by(`отравление`) |>
+  count(`еда`, `факт употребления`) |>
+  pivot_wider(names_from = `отравление`, values_from = n) |>
+  filter(`факт употребления` == "1") |>
+  adorn_totals("row") |>
+  flextable() |>
+  theme_zebra() |>
+  autofit()
+```
+
+Всего 33 отравления. 
+Видно, что из тех, кто ел рыбу отравилось только 3 человека. С нее подозрения как от основного источника отравлений снимаем. Теперь нужно понять, нет ли среди употреблявших мясо и рыбу одинаковых людей. Но прежде всего, оценим кто же все таки из употреблявших рыбу отравился: употреблявшие только рыбу, или употреблявшие рыбу и еще один продукт. То, что суммарное количество фактов употребления больше - закономерно, так как некоторые продукты употреблялись одновременно.
+
+Также, проверим есть ли вообще люди, отобранные для контроля, которые вообще не ели.
+```{r}
+poison_data |>
+  mutate(`кол-во блюд` = `мясо` + `рыба` + `салат`) |>
+  pivot_longer(
+    cols = `мясо`:`салат`,
+    names_to = "еда",
+    values_to = "факт употребления"
+  ) |>
+  group_by(`кол-во блюд`) |>
+  summarise(n = n()) |>
+  flextable() |>
+  theme_zebra() |>
+  autofit()
+```
+Как оказалось - есть. 18 человек ничего не ели. Проверим, есть ли среди них отравления.
+
+```{r}
+poison_data |>
+  mutate(`кол-во блюд` = `мясо` + `рыба` + `салат`) |>
+  filter(`кол-во блюд` == 0, `отравление` == 1)
+```
+Закономерно, что среди не евших нету заболевших. Не евших можем убрать из расследования. Можем сделать это на этапе рассчета мер ассоциации.
+
+```{r bad_fish, warning = FALSE, inlude = FALSE}
+poison_data |>
+  mutate(`кол-во блюд` = `мясо` + `рыба` + `салат`) |>
+  pivot_longer(
+    cols = `мясо`:`салат`,
+    names_to = "еда",
+    values_to = "факт употребления"
+  ) |>
+  mutate(`еда` = factor(`еда`)) |>
+  filter(`еда` == "рыба", `факт употребления` == "1" & `кол-во блюд` == 1) |>
+  group_by(`отравление`) |>
+  summarise(n = n()) |>
+  flextable() |>
+  theme_zebra() |>
+  set_header_labels(
+    `отравление` = "Отравление",
+    `n` = "Употреблявшие только рыбу"
+  ) |>
+  autofit()
+```
+Рыба точно невиновна - среди тех, кто употреблял только рыбу отравлений нет. Мы можем убрать ее из расследования. Теперь попробуем выяснить чем отравилсь 3 человека, которые употребляли рыбу
+
+```{r}
+poison_data |>
+  mutate(`кол-во блюд` = `мясо` + `рыба` + `салат`) |>
+  filter(`отравление` == 1, `рыба` == 1) |>
+  flextable() |>
+  theme_zebra() |>
+  autofit()
+```
+Среди 3 человек, кто отравился рыбой, двое употребляли и мясо и салат одновременно и один употреблял только салат. 
+
+Оценим, кто отравился только мясом
+```{r }
+poison_data |>
+  mutate(`кол-во блюд` = `мясо` + `рыба` + `салат`) |>
+  pivot_longer(
+    cols = `мясо`:`салат`,
+    names_to = "еда",
+    values_to = "факт употребления"
+  ) |>
+  filter(`еда` == "мясо", `факт употребления` == "1" & `кол-во блюд` == 1) |>
+  group_by(`отравление`) |>
+  summarise(n = n()) |>
+  flextable() |>
+  theme_zebra() |>
+  set_header_labels(
+    `отравление` = "Отравление",
+    `n` = "Употреблявшие только мясо"
+  ) |>
+  autofit()
+```
+Среди употреблявших только мясо выявлено 6 отравлений мясом. Остается 10 человек, которые отравились при употреблении мяса и других продуктов.
+
+Оценим салат. 
+```{r }
+poison_data |>
+  mutate(`кол-во блюд` = `мясо` + `рыба` + `салат`) |>
+  pivot_longer(
+    cols = `мясо`:`салат`,
+    names_to = "еда",
+    values_to = "факт употребления"
+  ) |>
+  filter(`еда` == "салат", `факт употребления` == "1" & `кол-во блюд` == 1) |>
+  group_by(`отравление`) |>
+  summarise(n = n()) |>
+  flextable() |>
+  theme_zebra() |>
+  set_header_labels(
+    `отравление` = "Отравление",
+    `n` = "Употреблявшие только салат"
+  ) |>
+  autofit()
+```
+Среди тех, кто ел только салат отравилось 3 человека.
+
+```{r}
+only_one_product_posion <- data.frame(
+  `Употребляли только:` = factor(c("мясо", "рыба", "салат")),
+  `Отравление` = c(6, 0, 3),
+  `Не отравление` = c(3, 7, 13)
+) |>
+  adorn_totals("row") |>
+  flextable() |>
+  theme_zebra() |>
+  autofit()
+only_one_product_posion
+```
+
+9 человек отравилось при употреблении одного только мяса и только рыбы. Из них 6 отравилось мясом, 3 рыбой. Разбираем оставшиеся 24 отравления. Построим таблциу сопряженности для мяса и салата.
+
+Учитывая, что если те, кто отравились могли это сделать либо из-за мяса, либо из-за салата.
+
+```{r}
+meat_poison <- poison_data |>
+  mutate(`кол-во блюд` = `мясо` + `рыба` + `салат`) |>
+  filter(`кол-во блюд` > 0) |>
+  select(!c("сотрудник", "рыба", "кол-во блюд")) |>
+  select(!`салат`) |>
+  group_by(`мясо`) |>
+  count(`мясо`, `отравление`) |>
+  pivot_wider(names_from = `отравление`, values_from = n) |>
+  mutate(Total = `0` + `1`, `мясо` = factor(`мясо`)) |>
+  relocate(`0`, .after = `1`)
+
+table_meat <- meat_poison |>
+  adorn_totals("row") |>
+  flextable() |>
+  theme_zebra() |>
+  autofit()
+table_meat
+```
+
+
+```{r meat_countings, warning = FALSE, include = FALSE}
+meat_ir <- meat_poison$`1`[2] / meat_poison$Total[2]
+
+non_meat_ir <- meat_poison$`1`[1] / meat_poison$Total[1]
+
+meat_poison_RR <- meat_ir / non_meat_ir
+
+
+meat_poison_RR_table <- data.frame(
+  food = c("Ел мясо", "Не ел мясо"),
+  meat_poison_incidence_risk = c(meat_ir, non_meat_ir)
+) |>
+  flextable() |>
+  theme_zebra() |>
+  set_header_labels(
+    food = "Факт употребления",
+    meat_poison_incidence_risk = "Заболеваемость при приеме\nмяса (incidence)"
+  ) |>
+  autofit()
+meat_poison_RR_table
+
+sprintf(
+  "Относительный риск отравления при употреблении мяса равен:"
+)
+meat_poison_RR
+
+meat_poison_RD <- meat_ir - non_meat_ir
+sprintf("Разница рисков отравления при употреблении мяса равна:")
+meat_poison_RD
+```
+
+```{r}
+salad_poison <- poison_data |>
+  mutate(`кол-во блюд` = `мясо` + `рыба` + `салат`) |>
+  filter(`кол-во блюд` > 0) |>
+  select(!c("сотрудник", "рыба", "кол-во блюд")) |>
+  select(!`мясо`) |>
+  group_by(`салат`) |>
+  count(`салат`, `отравление`) |>
+  pivot_wider(names_from = `отравление`, values_from = n) |>
+  mutate(Total = `0` + `1`, `салат` = factor(`салат`)) |>
+  relocate(`0`, .after = `1`)
+
+table_salad <- salad_poison |>
+  adorn_totals("row") |>
+  flextable() |>
+  theme_zebra() |>
+  autofit()
+table_salad
+```
+
+
+
+```{r}
+salad_ir <- salad_poison$`1`[2] / salad_poison$Total[2]
+
+non_salad_ir <- salad_poison$`1`[1] / salad_poison$Total[1]
+
+salad_poison_RR <- salad_ir / non_salad_ir
+
+
+salad_poison_RR_table <- data.frame(
+  food = c("Ел салат", "Не ел салат"),
+  salad_poison_incidence_risk = c(salad_ir, non_salad_ir)
+) |>
+  flextable() |>
+  theme_zebra() |>
+  set_header_labels(
+    food = "Факт употребления",
+    salad_poison_incidence_risk = "Заболеваемость при приеме\nсалата (incidence)"
+  ) |>
+  autofit()
+salad_poison_RR_table
+
+sprintf(
+  "Относительный риск отравления при употреблении салата равен:"
+)
+salad_poison_RR
+
+salad_poison_RD <- salad_ir - non_salad_ir
+sprintf("Разница рисков отравления при употреблении салата равна:")
+salad_poison_RD
+```
+
+
+```{r}
+meat_salad_table <- data.frame(
+  `Пища` = c("Мясо", "Салат"),
+  `RR` = c(meat_poison_RR, salad_poison_RR),
+  `RD` = c(meat_poison_RD, salad_poison_RD)
+) |>
+  flextable() |>
+  theme_zebra() |>
+  autofit()
+meat_salad_table
+```
+
+Таким образом:
+1) Рыба - не причина отравления. Фактор отравления среди людей, употреблявших только рыбу не выявлено.
+2) Относительный риск отравления мясом - 2.83. Это говороти о позитивной ассоциации отравления с употреблением мяса и о повышенном риске отравления при употреблении мяса.Также, среди употреблявших только мясо, отравилось 6 человек.
+3) Среди употреблявших только салат, отравилось 3 человека. Относительный риск отравления салатом составил 0.6, что меньше чем было у мяса. Несмотря на то, что RR меньше единицы, исключать то, что отравление не связано с салатом нельзя. Вполне вероятно. Вполне вероятно, что среди тех, кто употреблял и мясо и салат могли быть те, кто съел не испорченное мясо и испорченный салат, что могло вызвать отравление.
+4) В группу контроля попали люди без признаков отравления, которые ничего не употребляли
+
+Однако основной причиной отравления на основании полученных данных можно считать мясо.
+
+
+# Аренда автомобилей
+
+Помотрим incidence rate и сравним его у опытных и неопытных автомобоилистов. Данный показатель подходит, так как отражает уровень заболеваемости ( в нашем случае аварий) в течение определенного времени (у нас - года). Для начала возьмем опытных:
+```{r}
+pers_time <- carrental_data |>
+  mutate(days = stop - start) |>
+  select(!c(X, start, stop, experience)) |>
+  mutate(person_time = sum(days))
+```
+
+PT = 7222. Ищем N (в нашем случае accident) для опытных
+
+```{r}
+all_accidents_exp <- carrental_data |>
+  filter(experience == "1") |>
+  mutate(`Сумма всех событий` = sum(accident))
+```
+Получилось, что у опытных автомобилистов только 3 аварии.
+Считаем Incidence rate
+
+```{r}
+experienced_drivers_ir <- all_accidents_exp$`Сумма всех событий`[1] /
+  pers_time$person_time[1]
+
+sprintf("Incidence reate у опытных водителей равен:")
+experienced_drivers_ir
+```
+Проделываем то же, но для неопытных водителей
+
+```{r}
+all_accidents_non_exp <- carrental_data |>
+  filter(experience == "0") |>
+  mutate(`Сумма всех событий` = sum(accident))
+```
+Получилось, что у опытных автомобилистов только 3 аварии.
+Считаем Incidence rate
+
+```{r}
+non_experienced_drivers_ir <- all_accidents_non_exp$`Сумма всех событий`[1] /
+  pers_time$person_time[1]
+
+sprintf("Incidence reate у неопытных водителей равен:")
+non_experienced_drivers_ir
+```
+
+Для лучшей интерпретируемости, умножу на 1000
+
+```{r}
+car_ir_table <- data.frame(
+  `Водитель` = c("Опытный", "Неопытный"),
+  `Incidence rate` = c(
+    (experienced_drivers_ir) * 1000,
+    (non_experienced_drivers_ir) * 1000
+  )
+) |>
+  flextable() |>
+  theme_zebra() |>
+  autofit()
+car_ir_table
+```
+
+Мы видим, что встречаемость аварий среди 1000 опытных автомобилистов в 5 раз ниже, чем среди неопытных. Это уже указывает на то, что мы можем предоставлять скидки опытным.
+
+Теперь рассчитаем меры ассоциации. Здесь больше всего подойдет разница рисков - уровень заболеваемости (ну то есть аварий), который можно напрямую сравнить с воздействием. В одном из источников я увидел, что это называется Attributable risk (https://people.umass.edu/biep540w/pdf/Songer%20lecture%20on%20measures%20of%20association.pdf). Но как я понял, это тот же RD, так как высчитывается через разность incidence.
+
+```{r attributable_risk, warning = FALSE, echo = FALSE}
+ct_car <- carrental_data |>
+  mutate(experience = factor(experience)) |>
+  select(!c(X, start, stop)) |>
+  group_by(experience) |>
+  count(experience, accident) |>
+  pivot_wider(names_from = accident, values_from = n) |>
+  adorn_totals("col")
+
+ct_car_table <- carrental_data |>
+  select(!c(X, start, stop)) |>
+  group_by(experience) |>
+  count(experience, accident) |>
+  pivot_wider(names_from = accident, values_from = n) |>
+  adorn_totals("row") |>
+  flextable() |>
+  theme_zebra() |>
+  autofit()
+ct_car_table
+```
+
+
+```{r}
+exp_ir <- ct_car$`1`[2] / ct_car$Total[2]
+
+non_exp_ir <- ct_car$`1`[1] / ct_car$Total[1]
+
+exp_nonexp_AR <- (exp_ir - non_exp_ir)
+
+sprintf("Attributable risk аварии для водителей с опытом и без него:")
+exp_nonexp_AR
+```
+Таким образом менее чем 20 % заболеваний объяснялось наличием опыта в вождении. Учитывая, что она отрицательная, это значит, что взаимосвязь между опытом и авариями есть
+
